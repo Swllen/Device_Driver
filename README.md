@@ -1,4 +1,4 @@
-# BPC3xxController (Python, pythonnet) — README
+# BPC3xxController (Python, pythonnet)
 
 A lightweight Python wrapper around **Thorlabs Kinesis .NET API** for **BPC3xx Benchtop Piezo** controllers.  
 This class lets you pick which axes to connect (`X/Y/Z`), drive **single or multiple axes** with **parallel** execution, and switch between **closed-loop (position)** and **open-loop (voltage)** control.
