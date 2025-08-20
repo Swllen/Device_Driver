@@ -59,36 +59,20 @@ class SpinnakerCamera:
             cam_list.Clear()
 
     def _safe_set_pixel_format(self, pixfmt):
-        """
-        Try QuickSpin first (accepts int enums), fallback to GenAPI.
-        Supports either an int like PySpin.PixelFormat_Mono8 or a string like "Mono8".
-        """
-        # QuickSpin path
-        try:
-            # If pixfmt is string, QuickSpin expects enum (int). We'll try GenAPI in that case.
-            if isinstance(pixfmt, int):
-                self._cam.PixelFormat.SetValue(int(pixfmt))
-                return
-        except Exception:
-            pass
-
-        # GenAPI fallback
         pf_node = PySpin.CEnumerationPtr(self._nodemap.GetNode('PixelFormat'))
-        if not PySpin.IsWritable(pf_node):
-            return
+        if not (PySpin.IsReadable(pf_node) and PySpin.IsWritable(pf_node)):
+            raise RuntimeError("PixelFormat node not accessible")
 
         if isinstance(pixfmt, str):
-            # e.g. "Mono8", "BayerRG8", ...
-            entry = pf_node.GetEntryByName(pixfmt)
-            if PySpin.IsReadable(entry):
-                pf_node.SetIntValue(entry.GetValue())
+            entry = PySpin.CEnumEntryPtr(pf_node.GetEntryByName(pixfmt))
+            if not PySpin.IsReadable(entry):
+                raise RuntimeError(f"PixelFormat {pixfmt} not readable")
+            pf_node.SetIntValue(entry.GetValue())
         else:
-            # assume int enum
-            try:
-                pf_node.SetIntValue(int(pixfmt))
-            except Exception:
-                # last resort: do nothing
-                pass
+            pf_node.SetIntValue(int(pixfmt))
+
+        print("Pixel format set to", pf_node.GetCurrentEntry().GetSymbolic())
+
 
     def close(self):
         """Stop acquisition (if needed) and release resources."""
@@ -140,10 +124,6 @@ class SpinnakerCamera:
         try:
             if img.IsIncomplete():
                 raise RuntimeError(f"Incomplete image, status={int(img.GetImageStatus())}")
-
-            # Convert to Mono8 if needed
-            if img.GetPixelFormat() != PySpin.PixelFormat_Mono8:
-                img = self._processor.Convert(img, PySpin.PixelFormat_Mono8)
 
             arr = img.GetNDArray()  # shape HxW or HxWxC depending on format
             return np.array(arr, copy=True)  # copy so array is valid after Release
@@ -229,7 +209,7 @@ class SpinnakerCamera:
                         break
         except Exception:
             pass
-        
+
         node_gain = PySpin.CFloatPtr(self._nodemap.GetNode('Gain'))
         if not PySpin.IsWritable(node_gain):
             raise RuntimeError("Gain node not writable")
