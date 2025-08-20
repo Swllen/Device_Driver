@@ -115,23 +115,31 @@ class SpinnakerCamera:
             # If acquisition wasn't started, ignore
             pass
 
-    def grab_numpy(self, timeout_ms: int = 1000) -> np.ndarray:
-        """Grab one frame and return it as a numpy array (Mono8 by default)."""
+    def grab_numpy(self, timeout_ms: int = 1000):
         if self._cam is None:
             raise RuntimeError("Camera not opened")
 
-        img = self._cam.GetNextImage(timeout_ms)  # blocking until frame or timeout
+        img = self._cam.GetNextImage(timeout_ms)
         try:
             if img.IsIncomplete():
                 raise RuntimeError(f"Incomplete image, status={int(img.GetImageStatus())}")
 
-            arr = img.GetNDArray()  # shape HxW or HxWxC depending on format
-            return np.array(arr, copy=True)  # copy so array is valid after Release
+            # 解包 Mono12p → Mono16；其他格式按需再处理
+            pf_name = str(img.GetPixelFormatName())  # 查询当前像素格式
+            if "Mono12p" in pf_name or "Mono12Packed" in pf_name:
+                img = self._processor.Convert(img, PySpin.PixelFormat_Mono12p)  # 解包到12位
+            elif img.GetPixelFormat() != PySpin.PixelFormat_Mono8:
+                # 若只是想预览，转成Mono8也可以；但会丢位深
+                img = self._processor.Convert(img, PySpin.PixelFormat_Mono8)
+
+            arr = img.GetNDArray()  # Mono12p时得到 dtype=uint16 的数组
+            return np.array(arr, copy=True)
         finally:
             try:
                 img.Release()
             except Exception:
                 pass
+
 
     # ---------- Exposure ----------
     def set_exposure(self, auto: bool = False, time_us: Optional[float] = None):
