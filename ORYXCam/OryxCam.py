@@ -325,6 +325,66 @@ class SpinnakerCamera:
             if PySpin.IsReadable(entry):
                 handling.SetIntValue(entry.GetValue())
 
+def pyspin_image_to_numpy(img):
+    """将 PySpin.Image 转成 numpy 数组（支持 Mono8 / Mono12p / Mono16）"""
+    # 基本属性
+    w = img.GetWidth()
+    h = img.GetHeight()
+    pf_name = str(img.GetPixelFormatName())  # 比如 'Mono12p'
+    buf = img.GetData()
+    size = img.GetBufferSize()
+
+    # 直接从 buffer 建立 uint8 视图
+    data_u8 = np.frombuffer(buf, dtype=np.uint8, count=size)
+
+    if pf_name == 'Mono8':
+        arr = data_u8.reshape(h, img.GetStride())[:, :w]  # 去掉可能的行填充
+        return arr.copy()  # 返回紧凑数组
+
+    if pf_name == 'Mono16':
+        # 注意：相机流通常是 little-endian；若你的相机是 big-endian，需要 .byteswap()
+        data_u16 = data_u8.view(np.uint16)
+        arr = data_u16.reshape(h, img.GetStride() // 2)[:, :w]
+        return arr.copy()
+
+    if pf_name == 'Mono12p':
+        # 12-bit packed：每3字节=2像素
+        # bytes: [b0, b1, b2] -> p0 = b0 | ((b1 & 0x0F) << 8); p1 = (b2 << 4) | ((b1 & 0xF0) >> 4)
+        # 先按行解包更安全（考虑 stride/padding）
+        stride = img.GetStride()  # 每行字节数（包含 padding）
+        row_bytes = w * 12 // 8   # 每行有效像素数据的字节数（packed后）
+        assert row_bytes % 3 == 0, "Mono12p 每行有效字节应该是3的倍数"
+
+        out = np.empty((h, w), dtype=np.uint16)
+
+        offset = 0
+        for r in range(h):
+            row = data_u8[offset: offset + row_bytes]
+            # 解包本行
+            b0 = row[0::3].astype(np.uint16)
+            b1 = row[1::3].astype(np.uint16)
+            b2 = row[2::3].astype(np.uint16)
+
+            p0 = b0 | ((b1 & 0x0F) << 8)
+            p1 = (b2 << 4) | ((b1 & 0xF0) >> 4)
+
+            # 拼回一行 w 个像素
+            packed = np.empty(p0.size + p1.size, dtype=np.uint16)
+            packed[0::2] = p0
+            packed[1::2] = p1
+
+            out[r, :] = packed[:w]
+
+            offset += stride  # 跳到下一行（跨过 padding）
+
+        return out
+
+    # 其它格式：可以先用 ImageProcessor.Convert 转到 Mono8/Mono16 再转 numpy
+    # from PySpin import ImageProcessor, PixelFormat_Mono8
+    # proc = ImageProcessor()
+    # img2 = proc.Convert(img, PySpin.PixelFormat_Mono16)
+    # 然后对 img2 调用本函数的 Mono16 分支
+    raise NotImplementedError(f'暂不支持像素格式: {pf_name}')
 
 if __name__ == "__main__":
     cam = SpinnakerCamera(pixel_format=PySpin.PixelFormat_Mono12p)
