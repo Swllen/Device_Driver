@@ -200,6 +200,49 @@ class SpinnakerCamera:
                     val = g.GetMax()
                 g.SetValue(val)
 
+    # ---------- Gain ----------
+    def set_gain(self, auto: bool = False, gain_db: Optional[float] = None):
+        """
+        Configure analog gain:
+        - auto=True  -> GainAuto=Continuous（or On）
+        - auto=False -> GainAuto=Off，gain_db（dB）
+        """
+        if self._cam is None:
+            raise RuntimeError("Camera not opened")
+
+        node_gain_auto = PySpin.CEnumerationPtr(self._nodemap.GetNode('GainAuto'))
+        if PySpin.IsWritable(node_gain_auto):
+            entry = node_gain_auto.GetEntryByName('Continuous' if auto else 'Off')
+            if PySpin.IsReadable(entry):
+                node_gain_auto.SetIntValue(entry.GetValue())
+
+        if auto or gain_db is None:
+            return 
+
+        try:
+            gain_selector = PySpin.CEnumerationPtr(self._nodemap.GetNode('GainSelector'))
+            if PySpin.IsWritable(gain_selector):
+                for name in ('Analog', 'All'):
+                    e = gain_selector.GetEntryByName(name)
+                    if PySpin.IsReadable(e):
+                        gain_selector.SetIntValue(e.GetValue())
+                        break
+        except Exception:
+            pass
+        
+        node_gain = PySpin.CFloatPtr(self._nodemap.GetNode('Gain'))
+        if not PySpin.IsWritable(node_gain):
+            raise RuntimeError("Gain node not writable")
+
+        val = float(gain_db)
+        try:
+            gmin, gmax = node_gain.GetMin(), node_gain.GetMax()
+            if val < gmin: val = gmin
+            if val > gmax: val = gmax
+        except Exception:
+            pass
+        node_gain.SetValue(val)
+
     # ---------- ROI ----------
     def set_roi(self, x: int, y: int, w: int, h: int, center: bool = False):
         """
@@ -296,12 +339,11 @@ class SpinnakerCamera:
 
 
 if __name__ == "__main__":
-    cam = SpinnakerCamera(pixel_format=PySpin.PixelFormat_Mono8)
+    cam = SpinnakerCamera(pixel_format=PySpin.PixelFormat_Mono12p)
     cam.open()
 
     # Optional: for feedback control to always use the latest frame
     cam.set_latest_only(buffer_count=3)
-
     cam.set_exposure(auto=False, time_us=200)  # microseconds
     cam.set_roi(100, 200, 640, 480)
 

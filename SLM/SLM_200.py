@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ctypes import *
 from scipy import misc
-from time import sleep
+import time
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -46,14 +46,22 @@ class SantecSLM:
 
 # Example
 if __name__ == "__main__":
-    file_path = "E:/BU_Research/Nodeology_project/MPLC_Wang_resources-20250630T191323Z-1-001/MPLC_Wang_resources/0811/3/780nm_OAM20_MAGx70_InS1p145_PSx365.mat"
+    file_path = "E:\\BU_Research\\AutoOAM\\MPLC\\MPLC_Wang_resources\\0811\\2\\780nm_OAM20_MAGx70_InS1p145_PSx400.mat"
     phase1,phase2=open_mat(file_path)
+    phase1_defocus = applyPhaseChange(phase1,780,defocus_mm=9000,xastig=-45,yastig=1.2)
+    phase2_defocus = applyPhaseChange(phase2,780,defocus_mm=1500,xastig=-70,yastig=1.5)
+    phase1_shift = cirshift_xy(phase1_defocus,20,60)
+    phase2_shift = cirshift_xy(phase2_defocus,114,30)
+    # phase1_shift_change = applyPhaseChange(phase1_shift,780,defocus_mm=0)
+    # phase2_shift_change = applyPhaseChange(phase2_shift,780,defocus_mm=440,yastig=1)
+    csvfile=r"E:\BU_Research\SLM\code\wavefront_correct\data\raw_780\raw_780_2.csv"
+    df = pd.read_csv(csvfile)
+    correction = df.values.astype(np.uint16)
+    correction=create_pattern(1200,1920,1920//2,1200//2,array=correction)
 
-    phase1_shift = cirshift_xy(phase1,5,35)
-    phase2_shift = cirshift_xy(phase2,104,22)
-
-    pattern = merge_phase(phase1_shift,phase2_shift)
-
+    pattern = np.zeros((1200, 1920), dtype=np.uint16)
+    pattern[:,0:1920//2] = phase1_shift
+    pattern = (pattern + correction) % 1024
     '''
     DISPLAY
     '''
@@ -69,5 +77,5 @@ if __name__ == "__main__":
     plt.imshow(phase2_shift,cmap='gray')
     plt.subplot(1,3,3)
     plt.imshow(pattern,cmap="gray")
-
-    # SLM.close_dispaly()
+    time.sleep(100)
+    SLM.close_dispaly()
