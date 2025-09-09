@@ -4,7 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
-DEBUG = True
+DEBUG = False
 SMOOTH_K = 21
 SUBPIXEL = True
 SIGMA = 20
@@ -96,18 +96,18 @@ def process_and_judge_direction(img: np.ndarray, sigma: float = 20.0, smooth_k: 
         if (lx is None) and (rx is None):
             directionx = "None"
         if (lx is None) and (rx is not None):
-            directionx = "Right"
+            directionx = "right"
         if (rx is None) and (lx is not None):
-            directionx = "Left"
+            directionx = "left"
     else:
         directionx = "Center"
     if yc is None:
         if (ty is None) and (by is None):
             directiony = "None"
         if (ty is None) and (by is not None):
-            directiony = "Down"
+            directiony = "down"
         if (by is None) and (ty is not None):
-            directiony = "Up"
+            directiony = "up"
     else:
         directiony = "Center"
 
