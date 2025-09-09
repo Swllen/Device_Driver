@@ -10,10 +10,10 @@ from preprocess import *
 
 # ===== Control & hardware parameters =====
 DEADBAND_NORM = 0.03        # Normalized deadband to ignore tiny errors
-KP_NR = 10000.0                 # Proportional gain (normalized -> pulse)
+KP_NR = 26000.0                 # Proportional gain (normalized -> pulse)
 KI_NR = 100                    # Integral gain (normalized-sum -> pulse)
 KD_NR = 2.0
-KP_RR = 10000.0                 # Proportional gain (normalized -> pulse)
+KP_RR = 26000.0                 # Proportional gain (normalized -> pulse)
 KI_RR = 100                    # Integral gain (normalized-sum -> pulse)
 KD_RR = 2.0                      # Derivative gain (normalized rate -> pulse)
 INTEGRAL_CLAMP = 5000.0       # Clamp for integral accumulator (anti-windup)
@@ -24,6 +24,12 @@ STEP_PULSE = 5000             # Step used when center is missing for an axis
 SPEED = 1500                # Motor speed
 YAW_CH = "A"
 PITCH_CH = "B"
+
+YAW_CH1 = "A"
+PITCH_CH1 = "B"
+
+YAW_CH2 = "C"
+PITCH_CH2 = "D"
 
 # ===== Display & logging parameters =====
 WINDOW_NAME = "Feedback Viewer"
@@ -112,14 +118,14 @@ class PIDAxis:
         return pulse, direction
 
 # Build two PID controllers (yaw uses left/right; pitch uses up/down)
-pid_yaw = PIDAxis(KP, KI, KD, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
-pid_pitch = PIDAxis(KP, KI, KD, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
+pid_yaw = PIDAxis(KP_NR, KI_NR, KD_NR, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
+pid_pitch = PIDAxis(KP_RR, KI_RR, KD_RR, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
 
 def get_original_position(frame):
     _, _, xc, yc = process_and_judge_direction(frame)
     return xc, yc
 
-def apply_direction_step(pamc, dirx, diry, step=STEP_PULSE, speed=SPEED,
+def apply_direction_step(pamc: PAMC104Controller, dirx, diry, step=STEP_PULSE, speed=SPEED,
                          channel_yaw=YAW_CH, channel_pitch=PITCH_CH):
     """When a center is missing on an axis, nudge that axis in the inferred direction."""
     # Yaw
@@ -130,9 +136,9 @@ def apply_direction_step(pamc, dirx, diry, step=STEP_PULSE, speed=SPEED,
     time.sleep(clamp_pulse(step)/speed+0.05)
     # Pitch
     if diry == "down":
-        pamc.set_pitch("NR", speed, clamp_pulse(step), channel_pitch)
+        pamc.drive("RR", speed, clamp_pulse(step), channel_pitch)
     elif diry == "up":
-        pamc.set_pitch("RR", speed, clamp_pulse(step), channel_pitch)
+        pamc.drive("NR", speed, clamp_pulse(step), channel_pitch)
     time.sleep(clamp_pulse(step)/speed+0.05)
     
 
@@ -147,9 +153,9 @@ def drive_outputs(pamc: PAMC104Controller, yaw_cmd, yaw_dir, pitch_cmd, pitch_di
     time.sleep(clamp_pulse(yaw_cmd)/speed+0.05)
     if pitch_cmd > 0 and pitch_dir in ("up","down"):
         if pitch_dir == "down":
-            pamc.set_pitch("NR", speed, clamp_pulse(pitch_cmd), channel_pitch)
+            pamc.drive("RR", speed, clamp_pulse(pitch_cmd), channel_pitch)
         else:
-            pamc.set_pitch("RR", speed, clamp_pulse(pitch_cmd), channel_pitch)
+            pamc.drive("NR", speed, clamp_pulse(pitch_cmd), channel_pitch)
     time.sleep(clamp_pulse(pitch_cmd)/speed+0.05)
 
 def draw_overlay(frame, originalx, originaly, xc, yc, err_x=None, err_y=None,
@@ -213,7 +219,8 @@ def feedback_loop():
     
     # xc0, yc0 = get_original_position(first)
     #_________ DEBUG___________-
-    xc0=720,yc0=504
+    xc0=720
+    yc0=504
 
     h0, w0 = first.shape[:2]
     if xc0 is None or yc0 is None:
