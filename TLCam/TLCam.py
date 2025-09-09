@@ -1,9 +1,7 @@
 import numpy as np
 import time
-import cv2
 import os
 import sys
-from thorlabs_tsi_sdk.tl_camera import TLCameraSDK, OPERATION_MODE
 import matplotlib.pyplot as plt
 
 def configure_path():
@@ -18,13 +16,17 @@ def configure_path():
     except AttributeError:
         pass
 
+configure_path()
+
+from thorlabs_tsi_sdk.tl_camera import TLCameraSDK, OPERATION_MODE, ROI
+
 sdk = None
 
 class TLCameraController:
     def __init__(self, camera_num=0):
         global sdk
         if sdk is None:
-            sdk = TLCameraSDK() 
+            sdk = TLCameraSDK()
 
         available_cameras = sdk.discover_available_cameras()
         if len(available_cameras) == 0:
@@ -41,6 +43,7 @@ class TLCameraController:
         self.max_pixel_value = 2 ** self.bit_depth - 1
         self.camera.image_poll_timeout_ms = 1000
         self.is_initialized = False
+        self.is_continuous_trigger = False
         print(f"Camera {serial} initialized.")
 
     def setup_camera(self, exposure_us=500, gain=0, roi=None, binning=None):
@@ -50,18 +53,24 @@ class TLCameraController:
         if gain >= 0:
             self.camera.gain = gain
         if roi:
-            self.camera.roi_and_binning.set_roi(
-                roi['OriginX'], roi['OriginY'], roi['Width'], roi['Height'])
+            self.camera.roi = ROI(roi[0], roi[1], roi[2], roi[3])
         if binning:
             self.camera.roi_and_binning.set_binning(binning['BinX'], binning['BinY'])
-        self.camera.operation_mode = OPERATION_MODE.SOFTWARE_TRIGGERED
-        self.camera.frames_per_trigger_zero_for_unlimited = 1
-        self.is_initialized = True
         print(f"Camera setup complete. Exposure: {exposure_us} us, Gain: {gain}, ROI: {roi}, Bin: {binning}")
+
+    def frames_per_trigger(self, frames_num=1):
+        self.camera.operation_mode = OPERATION_MODE.SOFTWARE_TRIGGERED
+        if frames_num > 0:
+            self.camera.frames_per_trigger_zero_for_unlimited = frames_num
+            self.camera.image_poll_timeout_ms = 2000
+        elif frames_num == 0:
+            self.camera.frames_per_trigger_zero_for_unlimited = 0
+            self.camera.image_poll_timeout_ms = 2000
+        self.is_initialized = True
 
     def initialize_acquisition(self):
         if not self.is_initialized:
-            raise RuntimeError("Camera not initialized. Call setup_camera first.")
+            raise RuntimeError("Camera not initialized. Call frames_per_trigger first.")
         if not self.camera.is_armed:
             self.camera.arm(2)
             print("Camera armed.")
@@ -89,6 +98,31 @@ class TLCameraController:
         del frame
         return result
 
+    def acquire_frame_continuous(self,frame_info):
+        if not self.is_initialized:
+            raise RuntimeError("Camera not initialized.")
+        if not self.camera.is_armed:
+            self.camera.arm(2)
+        if not self.is_continuous_trigger:
+            self.camera.issue_software_trigger()
+            self.is_continuous_trigger = True
+
+        frame = self.camera.get_pending_frame_or_null()
+        if frame is None:
+            raise RuntimeError("No image returned.")
+        img = np.copy(frame.image_buffer).reshape(self.camera.image_height_pixels, self.camera.image_width_pixels)
+        if self.is_color_camera:
+            rgb_image = np.stack([img]*3, axis=-1)
+            result = rgb_image / self.max_pixel_value
+        else:
+            result = img
+        if frame_info:
+            timestamp = frame.time_stamp_relative_ns_or_null
+            frame_count = frame.frame_count
+            del frame
+            return result, timestamp, frame_count
+        return result
+
     def release(self):
         if self.camera:
             if self.camera.is_armed:
@@ -102,29 +136,37 @@ def close_sdk():
         sdk.dispose()
         sdk = None
         print("SDK resources released.")
+import cv2
 
 if __name__ == '__main__':
-    configure_path()
     cam1 = TLCameraController(camera_num=0)
-    cam2 = TLCameraController(camera_num=1)
-
-    cam1.setup_camera(exposure_us=1000, gain=0)
-    cam2.setup_camera(exposure_us=1500, gain=0)
-
+    cam1.setup_camera(exposure_us=500, gain=0)
+    cam1.frames_per_trigger(1)
     cam1.initialize_acquisition()
-    cam2.initialize_acquisition()
 
     try:
-        img1 = cam1.acquire_frame()
-        img2 = cam2.acquire_frame()
-        plt.imsave("cam1.png", img1, cmap='gray')
-        plt.imsave("cam2.png", img2, cmap='gray')
+        for i in range(10):
+            time.sleep(0.1)
+            img1 = cam1.acquire_frame()
+
+            # 如果是 16bit 图像，先归一化到 8bit
+            if img1.dtype != 'uint8':
+                norm = cv2.normalize(img1, None, 0, 255, cv2.NORM_MINMAX)
+                img_show = norm.astype('uint8')
+            else:
+                img_show = img1
+
+            cv2.imshow("Camera1", img_show)
+
+            # 按 q 或 ESC 退出
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord('q')):
+                break
     except Exception as e:
         print(f"Error: {e}")
     finally:
         cam1.stop_acquisition()
-        cam2.stop_acquisition()
         cam1.release()
-        cam2.release()
         close_sdk()
+        cv2.destroyAllWindows()
     print("Program completed")
