@@ -4,15 +4,18 @@ import cv2
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
-DEBUG = False
+DEBUG = True
 SMOOTH_K = 21
 SUBPIXEL = True
 SIGMA = 20
-DISTANCE = 200
+DISTANCE = 400
 PROMINENCE = 2
 
 def gaussian_blur(img: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian blur"""
+    """
+    Gaussian blur
+    Removes fine details or high-frequency information and details.
+    """
     if sigma <= 0:
         return img
     k = max(3, int(6*sigma) | 1)
@@ -29,7 +32,7 @@ def quad_subpixel(y: np.ndarray, i: int) -> float:
     if i <= 0 or i >= len(y)-1:
         return float(i)
     y0, y1, y2 = y[i-1], y[i], y[i+1]
-    denom = (y0 - 2*y1 + y2)
+    denom = (y0 - 2*y1 + y2) # base on parabola
     if abs(denom) < 1e-9:
         return float(i)
     delta = 0.5 * (y0 - y2) / denom
@@ -48,12 +51,13 @@ def plot_debug(p,peaks):
     
 
 def profile_peaks_center(profile: np.ndarray, smooth_k: int = 3, 
-                         prominence: int = 2,distance: int = 200,
+                         prominence: int = 2,distance_peaks: int = 200,
                          subpixel: bool = True, debug: bool = DEBUG) -> Tuple[float, float, float]:
     """Return (center_index, left_peak_index, right_peak_index) as floats (subpixel)."""
     p = smooth1d(profile, k=smooth_k) if smooth_k > 1 else profile.copy()
-    peaks, _ = find_peaks(p,height=0.7*np.max(p),prominence=prominence,distance=distance)
-    min_idx = int(np.argmin(p))   # if min index is on the left of peak(only single), the ring is righr.
+    # peaks, _ = find_peaks(p,height=0.5*np.max(p),prominence=PROMINENCE,distance=distance)
+    peaks, _ = find_peaks(p,height=0.5*np.max(p),distance=distance_peaks)
+    min_idx = int(np.argmin(p))   # if min index is on the left of peak(only single), the ring is right.
     if debug == True:
         plot_debug(p,peaks)
 
@@ -83,14 +87,14 @@ def profile_peaks_center(profile: np.ndarray, smooth_k: int = 3,
         return c, iL, iR
    
 def process_and_judge_direction(img: np.ndarray, sigma: float = 20.0, smooth_k: int = 21,
-                                prominence=2, distance=200, subpixel: bool = True):
+                                prominence=2, distance_peaks=200, subpixel: bool = True):
     """Compute center (xc, yc) and radius r from profiles; return diagnostics in dict."""
     blur = gaussian_blur(img, sigma) if sigma > 0 else img
     xprof = blur.mean(axis=0)
     yprof = blur.mean(axis=1)
 
-    xc, lx, rx = profile_peaks_center(xprof, smooth_k, subpixel, prominence, distance)
-    yc, ty, by = profile_peaks_center(yprof, smooth_k, subpixel, prominence, distance)
+    xc, lx, rx = profile_peaks_center(xprof, smooth_k, prominence, distance_peaks, subpixel)
+    yc, ty, by = profile_peaks_center(yprof, smooth_k, prominence, distance_peaks, subpixel)
 
     if xc is None:
         if (lx is None) and (rx is None):
@@ -115,11 +119,12 @@ def process_and_judge_direction(img: np.ndarray, sigma: float = 20.0, smooth_k: 
 
 
 if __name__ == "__main__":
-    image_path = r"E:\BU_Research\LabData\0814\Defocus_Sweep\20250814_1945\cam2\phase2_0.png"
+    # image_path = r"E:\BU_Research\LabData\0814\Defocus_Sweep\20250814_1945\cam2\phase2_0.png"
     # image_path = "FeedBack\image.png"
     # image_path = r"D:\Desktop\2.png"
+    image_path = r"E:\BU_Research\AutoOAM\DeviceDriver\Device_Driver\FeedBack\1.png"
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     directionx,directiony, xc, yc = process_and_judge_direction(img,smooth_k=SMOOTH_K,subpixel=SUBPIXEL,
-                                                                distance=DISTANCE, prominence=PROMINENCE,
+                                                                distance_peaks=DISTANCE, prominence=PROMINENCE,
                                                                 sigma=SIGMA)
     print(f"Direction X: {directionx}, Direction Y: {directiony}, xc: {xc}, yc: {yc}")
