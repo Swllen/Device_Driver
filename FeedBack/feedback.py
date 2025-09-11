@@ -9,7 +9,7 @@ from TLCam.TLCam import *
 from preprocess import *
 
 # ===== Control & hardware parameters =====
-DEADBAND_NORM = 0.03        # Normalized deadband to ignore tiny errors
+DEADBAND_NORM = 0.001        # Normalized deadband to ignore tiny errors
 KP_NR = 26000.0                 # Proportional gain (normalized -> pulse)
 KI_NR = 100                    # Integral gain (normalized-sum -> pulse)
 KD_NR = 2.0
@@ -22,8 +22,6 @@ MIN_PULSE = 10              # Do not send zero; any motion gets at least this
 MAX_PULSE = 9999            # HW limit
 STEP_PULSE = 5000             # Step used when center is missing for an axis
 SPEED = 1500                # Motor speed
-YAW_CH = "A"
-PITCH_CH = "B"
 
 YAW_CH1 = "A"
 PITCH_CH1 = "B"
@@ -121,12 +119,12 @@ class PIDAxis:
 pid_yaw = PIDAxis(KP_NR, KI_NR, KD_NR, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
 pid_pitch = PIDAxis(KP_RR, KI_RR, KD_RR, DEADBAND_NORM, INTEGRAL_CLAMP, DERIVATIVE_LPF_ALPHA)
 
-def get_original_position(frame):
-    _, _, xc, yc = process_and_judge_direction(frame)
+def get_original_position(frame,distance):
+    _, _, xc, yc = process_and_judge_direction(frame,distance_peaks=distance)
     return xc, yc
 
 def apply_direction_step(pamc: PAMC104Controller, dirx, diry, step=STEP_PULSE, speed=SPEED,
-                         channel_yaw=YAW_CH, channel_pitch=PITCH_CH):
+                         channel_yaw=YAW_CH2, channel_pitch=PITCH_CH2):
     """When a center is missing on an axis, nudge that axis in the inferred direction."""
     # Yaw
     if dirx == "left":
@@ -143,7 +141,7 @@ def apply_direction_step(pamc: PAMC104Controller, dirx, diry, step=STEP_PULSE, s
     
 
 def drive_outputs(pamc: PAMC104Controller, yaw_cmd, yaw_dir, pitch_cmd, pitch_dir,
-                  channel_yaw=YAW_CH, channel_pitch=PITCH_CH, speed=SPEED):
+                  channel_yaw=YAW_CH2, channel_pitch=PITCH_CH2, speed=SPEED):
     """Send clamped non-zero pulses to hardware (if command > 0)."""
     if yaw_cmd > 0 and yaw_dir in ("left","right"):
         if yaw_dir == "left":
@@ -161,8 +159,6 @@ def drive_outputs(pamc: PAMC104Controller, yaw_cmd, yaw_dir, pitch_cmd, pitch_di
 def draw_overlay(frame, originalx, originaly, xc, yc, err_x=None, err_y=None,
                  yaw_cmd=0, yaw_dir="center", pitch_cmd=0, pitch_dir="center",
                  fps=None, msg=""):
-    """在画面上叠加可视化信息。"""
-    # 确保三通道
     if frame.ndim == 2:
         disp = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
     else:
@@ -170,17 +166,17 @@ def draw_overlay(frame, originalx, originaly, xc, yc, err_x=None, err_y=None,
 
     h, w = disp.shape[:2]
 
-    # 参考中心
+    # refrence center
     if originalx is not None and originaly is not None:
         cv2.drawMarker(disp, (int(originalx), int(originaly)), CENTER_COLOR,
                        markerType=cv2.MARKER_CROSS, markerSize=18, thickness=2)
 
-    # 当前检测到的中心
+    # center detected
     if xc is not None and yc is not None:
         cv2.circle(disp, (int(xc), int(yc)), 6, POINT_COLOR, 2)
 
 
-    # 文本信息
+    # text
     y0, dy = 24, 22
     lines = []
     if fps is not None:
@@ -199,10 +195,21 @@ def draw_overlay(frame, originalx, originaly, xc, yc, err_x=None, err_y=None,
 
     return disp
 
+def print_log(dt,err_x,err_y,yaw_dir,yaw_cmd,pitch_dir,pitch_cmd,status_msg,xc,yc):
+    """Print log of the status"""
+    ts = time.strftime("%H:%M:%S")
+    print(f"[INFO] [{ts}] dt={dt*1000:.1f}ms "
+            f"xc={None if xc is None else f'{xc:.1f}'}  "
+            f"yc={None if yc is None else f'{yc:.1f}'}  "
+            f"err_x={None if err_x is None else f'{err_x:+.4f}'}  "
+            f"err_y={None if err_y is None else f'{err_y:+.4f}'}  "
+            f"yaw=({yaw_dir},{yaw_cmd})  pitch=({pitch_dir},{pitch_cmd})  "
+            f"{status_msg}")
+    
 def feedback_loop():
     # Camera init
     camera = TLCameraController()
-    camera.setup_camera(exposure_us=500, gain=0)
+    camera.setup_camera(exposure_us=15000, gain=0)
     camera.frames_per_trigger(1)
     camera.initialize_acquisition()
 
@@ -219,8 +226,8 @@ def feedback_loop():
     
     # xc0, yc0 = get_original_position(first)
     #_________ DEBUG___________-
-    xc0=720
-    yc0=504
+    xc0=800
+    yc0=600
 
     h0, w0 = first.shape[:2]
     if xc0 is None or yc0 is None:
@@ -299,16 +306,7 @@ def feedback_loop():
                 status_msg = f"Both lost -> step X:{pre_dx or 'center'} Y:{pre_dy or 'center'}"
 
             # print log
-            if (t_now - last_log_t) >= LOG_INTERVAL_S:
-                last_log_t = t_now
-                ts = time.strftime("%H:%M:%S")
-                print(f"[{ts}] dt={dt*1000:.1f}ms  FPS={fps:.1f}  "
-                      f"xc={None if xc is None else f'{xc:.1f}'}  "
-                      f"yc={None if yc is None else f'{yc:.1f}'}  "
-                      f"err_x={None if err_x is None else f'{err_x:+.4f}'}  "
-                      f"err_y={None if err_y is None else f'{err_y:+.4f}'}  "
-                      f"yaw=({yaw_dir},{yaw_cmd})  pitch=({pitch_dir},{pitch_cmd})  "
-                      f"{status_msg}")
+            print_log(dt,err_x,err_y,yaw_dir,yaw_cmd,pitch_dir,pitch_cmd,status_msg,xc,yc)
 
             # Dispaly
             disp = draw_overlay(frame, originalx, originaly, xc, yc,
@@ -356,6 +354,7 @@ def feedback_loop():
             cv2.destroyAllWindows()
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     feedback_loop()

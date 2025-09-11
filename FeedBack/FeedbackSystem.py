@@ -25,14 +25,14 @@ KP_RR_1 = 26000.0
 KI_RR_1 = 100                    
 KD_RR_1 = 2.0
 """
-DEADBAND_NORM = 0.01
-PID_AB_PARAM = [26000, 100, 2.0, 26000, 100, 2.0]
-PID_CD_PARAM = [26000, 100, 2.0, 26000, 100, 2.0]
+DEADBAND_NORM = 0.005
+PID_AB_PARAM = [18000, 100, 2.0, 10170, 100, 2.0]
+PID_CD_PARAM = [28000, 100, 2.0, 16000, 100, 2.0]
 
 
 INTEGRAL_CLAMP = 5000.0       # Clamp for integral accumulator (anti-windup)
 DERIVATIVE_LPF_ALPHA = 0.2  # 0..1; lower = stronger smoothing (for D term)
-MIN_PULSE = 10              # Do not send zero; any motion gets at least this
+MIN_PULSE = 50              # Do not send zero; any motion gets at least this
 MAX_PULSE = 9999            # HW limit
 STEP_PULSE = 5000             # Step used when center is missing for an axis
 SPEED = 1500                # Motor speed
@@ -55,23 +55,27 @@ CamParam = [
             "contrast", 
             "saturation", 
             "sharpness", 
-            "gamma"
+            "gamma",
+            "h_flip"
 
             ])
 """
-CAMERA_1_PARAM = [1, 1920, 1080, 30, -13, 0, -4, 64, 0, 3, 72]
-CAMERA_2_PARAM = [1, 1920, 1080, 30, -13, 0, -4, 64, 0, 3, 72]
+CAMERA_1_PARAM = [1, 1920, 1080, 30, -7, 0, -4, 64, 0, 3, 72, False]
+CAMERA_2_PARAM = [2, 1920, 1080, 30, -12, 0, -4, 64, 0, 3, 72, True]
+DISTANCE_1 = 400 # Peaks' distance  of the profile for cam
+DISTANCE_2 = 280
 # ===== Control & hardware parameters =====
 
 
 # This is for the pamc feedback based on PID control
 class feedback_system:
     def __init__(self,cam_param: list = None, pamc: PAMC104Controller = None,
-                 yaw_ch: str = "", pitch_ch: str = "", pid_params: list = None):
+                 yaw_ch: str = "", pitch_ch: str = "", pid_params: list = None,distance: int = 0):
         self.original_x = 0
         self.original_y = 0
         self.frame_width = 0
         self.frame_height = 0
+        self.distance = distance
 
         self.cam_param = cam_param
         self.pamc = pamc
@@ -91,7 +95,7 @@ class feedback_system:
     def _get_original_position_and_frame_size(self):
         frame = self.cam.acquire_frame()
         self.frame_height,self.frame_width = frame.shape[:2]
-        xc0, yc0 = get_original_position(frame)
+        xc0, yc0 = get_original_position(frame,self.distance)
         if xc0 is None or yc0 is None:
             self.original_x, self.original_y = 0.5,0.5
             # self.original_x = 0.5
@@ -101,7 +105,7 @@ class feedback_system:
             self.original_x, self.original_y = xc0/self.frame_width, yc0/self.frame_height
             # self.original_x = 0.5
             # self.original_y = 0.5
-            print(f"[INIT] Original position acquired: X={xc0}, Y={yc0}")
+            print(f"[INIT] Original position acquired: X={self.original_x}, Y={self.original_y}")
         
 
     def _initialize_pid(self):
@@ -114,8 +118,8 @@ class feedback_system:
 
     
     def _initialize_ELP_cam(self):
-        device_num,width,height,fps,exposure,gain,brightness,contrast,saturation,sharpness,gamma = self.cam_param
-        self.cam = ELPCam(device=device_num, width=width, height=height, fps=fps, fourcc="MJPG", convert_rgb=False)
+        device_num,width,height,fps,exposure,gain,brightness,contrast,saturation,sharpness,gamma,h_flip = self.cam_param
+        self.cam = ELPCam(device=device_num, width=width, height=height, fps=fps, fourcc="MJPG", convert_rgb=False, h_flip=h_flip)
         self.cam.set_auto_exposure(False)
         self.cam.set_exposure(exposure)    # -13 ~ -1
         self.cam.set_gain(gain)
@@ -136,10 +140,11 @@ class feedback_system:
         self.reset_pid()
         t_prev = time.time()
         self.cam.start_acquisition()
+        time.sleep(1)
         try:
             while True:
                 frame = self.cam.acquire_frame()
-                pre_dx, pre_dy, xc, yc = process_and_judge_direction(frame)
+                pre_dx, pre_dy, xc, yc = process_and_judge_direction(frame,distance_peaks=self.distance)
 
                 
                 t_now = time.time()
@@ -158,7 +163,8 @@ class feedback_system:
                     err_x = (xc / float(self.frame_width)) - self.original_x
                     err_y = (yc / float(self.frame_height)) - self.original_y
                     if abs(err_x) < DEADBAND_NORM and abs(err_y) < DEADBAND_NORM:
-                        print("[INFO] \033[92mFeedBack Sucessful\033[0m")
+                        print_log(dt,err_x,err_y,yaw_dir,yaw_cmd,pitch_dir,pitch_cmd,status_msg,xc,yc)
+                        print("[INFO] \033[92mFeedBack Successful\033[0m")
                         self.reset_pid()
                         break
 
@@ -200,7 +206,7 @@ class feedback_system:
                 
                 # Dispaly
                 if display:
-                    disp = draw_overlay(frame, 720, 540, xc, yc,
+                    disp = draw_overlay(frame, self.original_x*self.frame_width,self.original_y*self.frame_height, xc, yc,
                                     err_x=0.0 if err_x is None else err_x,
                                     err_y=0.0 if err_y is None else err_y,
                                     yaw_cmd=yaw_cmd, yaw_dir=yaw_dir,
@@ -209,6 +215,8 @@ class feedback_system:
                 
                     norm = cv2.normalize(disp, None, 0, 255, cv2.NORM_MINMAX)
                     disp = norm.astype('uint8')
+                    cv2.namedWindow("WINDOW_NAME", cv2.WINDOW_NORMAL)
+                    cv2.resizeWindow("WINDOW_NAME",960,540)
                     cv2.imshow("WINDOW_NAME", disp)
                     # Exit: key q or esc
                     key = cv2.waitKey(1) & 0xFF
@@ -238,20 +246,39 @@ class feedback_system:
 
 def Initialize_FeedBack_System(pamc:PAMC104Controller = None, num:int = 1) -> feedback_system:
     if num == 1:
-        sys1 = feedback_system(cam_param=CAMERA_1_PARAM,pamc=pamc,yaw_ch=YAW_CH1,pitch_ch=PITCH_CH1,pid_params=PID_AB_PARAM)
+        sys1 = feedback_system(cam_param=CAMERA_1_PARAM,pamc=pamc,yaw_ch=YAW_CH1,pitch_ch=PITCH_CH1,pid_params=PID_AB_PARAM,distance=DISTANCE_1)
         sys1.initialize()
 
         return sys1
     elif num == 2:
-        sys1 = feedback_system(cam_param=CAMERA_1_PARAM,pamc=pamc,yaw_ch=YAW_CH1,pitch_ch=PITCH_CH1,pid_params=PID_AB_PARAM)
-        sys1.initialize()
-        time.sleep(2)
-        sys2 = feedback_system(cam_param=CAMERA_2_PARAM,pamc=pamc,yaw_ch=YAW_CH2,pitch_ch=PITCH_CH2,pid_params=PID_CD_PARAM)
+        sys2 = feedback_system(cam_param=CAMERA_2_PARAM,pamc=pamc,yaw_ch=YAW_CH2,pitch_ch=PITCH_CH2,pid_params=PID_CD_PARAM,distance=DISTANCE_2)
         sys2.initialize()
 
-        return sys1, sys2
+        return sys2
+    else:
+        sys1 = feedback_system(cam_param=CAMERA_1_PARAM,pamc=pamc,yaw_ch=YAW_CH1,pitch_ch=PITCH_CH1,pid_params=PID_AB_PARAM,distance=DISTANCE_1)
+        sys1.initialize()
+        time.sleep(2)
+        sys2 = feedback_system(cam_param=CAMERA_2_PARAM,pamc=pamc,yaw_ch=YAW_CH2,pitch_ch=PITCH_CH2,pid_params=PID_CD_PARAM,distance=DISTANCE_2)
+        sys2.initialize()
+        return sys1,sys2
     
+def random_test(pamc:PAMC104Controller = None,pmin:int=0,pmax:int=500,c1:str = "",c2:str=""):
+    import numpy as np
     
+    for i in range(5):
+        direction_id = np.random.randint(0,3)
+        channel_id = np.random.randint(0,2)
+        pulse = np.random.randint(pmin,pmax)
+        direction = "NR" if direction_id == 0 or direction_id == 1 else "RR"
+        channel = c1 if channel_id == 0 else c2
+        pamc.drive(direction, 1500, pulse, channel)
+        time.sleep(pulse/1500+0.1)
+    time.sleep(2)
+    print("[TEST] Random Done!")
+
+    
+
 
     
 if __name__ == "__main__":
@@ -264,14 +291,41 @@ if __name__ == "__main__":
         
         pamc = PAMC104Controller(port="COM7")
         print("Connection check:", pamc.connect_check())
-        sys1 = Initialize_FeedBack_System(pamc,1)
-        time.sleep(1)
-        pamc.drive("NR",1500,5000,"A")
-        time.sleep(5000/1500 + 0.05)
-        pamc.drive("NR",1500,5000,"B")
-        time.sleep(5000/1500 + 0.05)
+
+        display = False
+        sys1,sys2 = Initialize_FeedBack_System(pamc,3)
         time.sleep(5)
-        sys1.feedback_loop(1)
+
+        random_test(pamc,50,200,"A","B")
+        time.sleep(1)
+        sys1.feedback_loop(display)
+        time.sleep(1)
+
+        random_test(pamc,200,500,"A","B")
+        time.sleep(1)
+        sys1.feedback_loop(display)
+        time.sleep(1)
+
+        random_test(pamc,500,1000,"A","B")
+        time.sleep(1)
+        sys1.feedback_loop(display)
+        time.sleep(5)
+
+        random_test(pamc,50,200,"C","D")
+        time.sleep(1)
+        sys2.feedback_loop(display)
+        time.sleep(1)
+
+        random_test(pamc,200,500,"C","D")
+        time.sleep(1)
+        sys2.feedback_loop(display)
+        time.sleep(1)
+
+        random_test(pamc,500,1000,"C","D")
+        time.sleep(1)
+        sys2.feedback_loop(display)
+        time.sleep(1)
+        # random_test(pamc)
 
 
         # print("Connection check:", pamc.connect_check())
