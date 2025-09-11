@@ -11,13 +11,15 @@ class ELPCam:
         height: Optional[int] = None,
         fps: Optional[int] = None,
         fourcc: Optional[str] = "MJPG",  
-        convert_rgb: bool = False,       # 默认不转 BGR，保留原始数据
+        convert_rgb: bool = False,
+        h_flip: bool = False
     ):
         self.device = device
         self.cap = None
         self.width, self.height, self.fps = width, height, fps
         self.fourcc = fourcc
         self.convert_rgb = convert_rgb
+        self.h_flip = h_flip
 
         self._th: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -58,6 +60,8 @@ class ELPCam:
             if not ok:
                 time.sleep(0.005)
                 continue
+            if self.h_flip:                  
+                frame = cv2.flip(frame, 1)
             with self._lock:
                 self._latest = frame
         _ = self.cap.read()
@@ -170,12 +174,12 @@ class ELPCam:
 
 
 if __name__ == "__main__":
-    cam = ELPCam(device=1, width=1920, height=1080, fps=30, fourcc="MJPG", convert_rgb=False)
+    cam = ELPCam(device=2, width=1920, height=1080, fps=30, fourcc="MJPG", convert_rgb=False, h_flip=True)
     print("实际格式:", cam.actual_format())
 
     # 设置参数
     cam.set_auto_exposure(False)
-    cam.set_exposure(-13)    # 曝光：常见范围 -13 ~ -1，具体依驱动
+    cam.set_exposure(-12)    # 曝光：常见范围 -13 ~ -1，具体依驱动
     cam.set_gain(0)
     cam.set_brightness(-4)
     cam.set_contrast(64)
@@ -189,7 +193,7 @@ if __name__ == "__main__":
     cv2.resizeWindow(windowname,960,540)
     while True:
         gray = cam.acquire_frame()
-        # cv2.imwrite("1.png",gray)
+        cv2.imwrite("1.png",gray)
         # gray = cam.decode_frame(raw, gray=True)
         print(gray.shape)
         if gray is None:
