@@ -4,7 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
-DEBUG = True
+DEBUG = False
 SMOOTH_K = 21
 SUBPIXEL = True
 SIGMA = 20
@@ -56,7 +56,7 @@ def profile_peaks_center(profile: np.ndarray, smooth_k: int = 3,
     """Return (center_index, left_peak_index, right_peak_index) as floats (subpixel)."""
     p = smooth1d(profile, k=smooth_k) if smooth_k > 1 else profile.copy()
     # peaks, _ = find_peaks(p,height=0.5*np.max(p),prominence=PROMINENCE,distance=distance)
-    peaks, _ = find_peaks(p,height=0.5*np.max(p),distance=distance_peaks)
+    peaks, _ = find_peaks(p,height=0.2*np.max(p),distance=distance_peaks)
     min_idx = int(np.argmin(p))   # if min index is on the left of peak(only single), the ring is right.
     if debug == True:
         plot_debug(p,peaks)
