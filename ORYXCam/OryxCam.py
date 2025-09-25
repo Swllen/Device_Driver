@@ -114,7 +114,7 @@ class SpinnakerCamera:
         except Exception:
             # If acquisition wasn't started, ignore
             pass
-
+    
     def grab_numpy(self, timeout_ms: int = 1000):
         if self._cam is None:
             raise RuntimeError("Camera not opened")
@@ -229,6 +229,30 @@ class SpinnakerCamera:
                 if val > g.GetMax():
                     val = g.GetMax()
                 g.SetValue(val)
+
+        # ---------- ADC Bit Depth ----------
+    def set_adc_bitdepth(self, bit_str: str = "Bit12"):
+        """
+        Set ADC bit depth if supported by the camera.
+        :param bit_str: e.g., "Bit8", "Bit10", "Bit12", "Bit14"
+        """
+        if self._cam is None:
+            raise RuntimeError("Camera not opened")
+
+        node_adc = PySpin.CEnumerationPtr(self._nodemap.GetNode("ADCBitDepth"))
+        if not PySpin.IsAvailable(node_adc) or not PySpin.IsWritable(node_adc):
+            # 一些型号可能叫 AdcBitDepth，可以再尝试一下
+            node_adc = PySpin.CEnumerationPtr(self._nodemap.GetNode("AdcBitDepth"))
+        if not PySpin.IsAvailable(node_adc) or not PySpin.IsWritable(node_adc):
+            print("ADCBitDepth node not available on this camera")
+            return False
+
+        entry = node_adc.GetEntryByName(bit_str)
+        if not PySpin.IsReadable(entry):
+            raise RuntimeError(f"ADCBitDepth entry {bit_str} not readable/unsupported")
+        node_adc.SetIntValue(entry.GetValue())
+        print("ADC bit depth set to", node_adc.GetCurrentEntry().GetSymbolic())
+        return True
 
     # ---------- Gain ----------
     def set_gain(self, auto: bool = False, gain_db: Optional[float] = None):
