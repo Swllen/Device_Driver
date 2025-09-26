@@ -121,6 +121,7 @@ class SpinnakerCamera:
         if self._cam is None:
             raise RuntimeError("Camera not opened")
         img = self._cam.GetNextImage(timeout_ms)  # blocking until frame or timeout
+        
         pf_name = str(img.GetPixelFormatName())
         img_origin = self._cam.GetNextImage(timeout_ms)
         if pf_name == 'Mono8':
@@ -129,14 +130,16 @@ class SpinnakerCamera:
             img = self._processor.Convert(img_origin, PySpin.PixelFormat_Mono16)
         if pf_name == 'Mono12p':
             img = self._processor.Convert(img_origin, PySpin.PixelFormat_Mono12p)
-        if pf_name == 'Mono12packed':
+        if pf_name == 'Mono12Packed':
             img = self._processor.Convert(img_origin, PySpin.PixelFormat_Mono12Packed)
         if pf_name == 'Mono10p':
             img = self._processor.Convert(img_origin, PySpin.PixelFormat_Mono10p)
+        if pf_name == 'Mono10Packed':
+            img = self._processor.Convert(img_origin, PySpin.PixelFormat_Mono10Packed)
         try:
             if img.IsIncomplete():
                 raise RuntimeError(f"Incomplete image, status={int(img.GetImageStatus())}")
-
+            
             w = img.GetWidth()
             h = img.GetHeight()
             pf_name = str(img.GetPixelFormatName())
@@ -149,12 +152,72 @@ class SpinnakerCamera:
                 arr = data_u8.reshape(h, img.GetStride())[:, :w]
                 return arr.copy()
 
+            if pf_name == 'Mono10p':
+                stride = img.GetStride()
+                row_bytes = w * 10 // 8
+
+                out = np.empty((h, w), dtype=np.uint16)
+
+                offset = 0
+                for r in range(h):
+                    row = data_u8[offset: offset + row_bytes]
+
+                    b0 = row[0::5].astype(np.uint16)
+                    b1 = row[1::5].astype(np.uint16)
+                    b2 = row[2::5].astype(np.uint16)
+                    b3 = row[3::5].astype(np.uint16)
+                    b4 = row[4::5].astype(np.uint16)
+
+                    p0 = ( b0               | ((b1 & 0x03) << 8) ) & 0x03FF
+                    p1 = ((b1 >> 2)         | ((b2 & 0x0F) << 6)) & 0x03FF
+                    p2 = ((b2 >> 4)         | ((b3 & 0x3F) << 4)) & 0x03FF
+                    p3 = ((b3 >> 6)         | ( b4          << 2)) & 0x03FF
+
+
+                    packed = np.empty(p0.size + p1.size + p2.size + p3.size, dtype=np.uint16)
+                    packed[0::4] = p0
+                    packed[1::4] = p1
+                    packed[2::4] = p2
+                    packed[3::4] = p3
+
+                    out[r, :] = packed[:w]
+                    offset += stride
+
+                return out
+            
+            if pf_name == 'Mono10Packed':
+                stride = img.GetStride()
+                row_bytes = w * 3 // 2
+
+                out = np.empty((h, w), dtype=np.uint16)
+
+                offset = 0
+                for r in range(h):
+                    row = data_u8[offset: offset + row_bytes]
+
+                    b0 = row[0::3].astype(np.uint16)
+                    b1 = row[1::3].astype(np.uint16)
+                    b2 = row[2::3].astype(np.uint16)
+
+                    p0 = ((b0 << 2)         | ((b1 & 0x03) )) & 0x03FF
+                    p1 = ((b2 << 2)         | ((b1 >> 4 )& 0x03) ) & 0x03FF
+
+
+                    packed = np.empty(p0.size + p1.size, dtype=np.uint16)
+                    packed[0::2] = p0
+                    packed[1::2] = p1
+
+                    out[r, :] = packed[:w]
+                    offset += stride
+
+                return out
+            
             if pf_name == 'Mono16':
                 data_u16 = data_u8.view(np.uint16)
                 arr = data_u16.reshape(h, img.GetStride() // 2)[:, :w]
                 return arr.copy()
 
-            if pf_name == 'Mono12p' or pf_name == 'Mono12packed':
+            if pf_name == 'Mono12p':
                 stride = img.GetStride()
                 row_bytes = w * 12 // 8
 
@@ -180,6 +243,32 @@ class SpinnakerCamera:
                     offset += stride
 
                 return out
+            
+            if pf_name == "Mono12Packed":
+                stride = img.GetStride()
+                row_bytes = w * 12 // 8
+                out = np.empty((h, w), dtype=np.uint16)
+                offset = 0
+
+                for r in range(h):
+                    row = data_u8[offset: offset + row_bytes]
+
+                    b0 = row[0::3].astype(np.uint16)
+                    b1 = row[1::3].astype(np.uint16)
+                    b2 = row[2::3].astype(np.uint16)
+
+                    p0 = (b0 << 4) | (b1 & 0x0F)
+                    p1 = (b2 << 4) | ((b1 & 0xF0) >>4)
+
+                    packed = np.empty(p0.size + p1.size, dtype=np.uint16)
+                    packed[0::2] = p0
+                    packed[1::2] = p1
+
+                    out[r, :] = packed[:w]
+
+                    offset += stride
+
+            
         finally:
             try:
                 img.Release()
