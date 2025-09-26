@@ -1,0 +1,9 @@
+# Core scientific packages
+numpy>=1.21.0
+opencv-python>=4.5.0
+
+# Teledyne Spinnaker Python bindings
+# IMPORTANT: spinnaker_python is not available on PyPI.
+# You must manually install the official .whl package provided by Teledyne.
+# Example:
+# pip install spinnaker_python-4.2.0.88-cp310-cp310-win_amd64.whl
